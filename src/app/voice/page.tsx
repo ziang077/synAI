@@ -3,6 +3,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js'
+
 
 /**
  * Voice Uploader Component
@@ -171,7 +173,9 @@ export default function VoiceUploader() {
           height: 96,
           url: audioUrl,
           media: audioRef.current || undefined, // Sync with audio element
+          // plugins: [TimelinePlugin.create()],
         });
+
 
         // Register regions plugin for draggable selections
         const regionsPlugin = ws.registerPlugin(
