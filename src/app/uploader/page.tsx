@@ -35,6 +35,22 @@ interface EnvelopePoint {
 }
 
 /**
+ * Region interface for marking timeline segments (e.g., subtitles)
+ * @property id - Unique identifier for the region
+ * @property start - Start time in seconds
+ * @property end - End time in seconds
+ * @property content - Text content (e.g., subtitle text)
+ * @property color - Background color for the region
+ */
+interface Region {
+  id: string;
+  start: number;
+  end: number;
+  content: string;
+  color?: string;
+}
+
+/**
  * Track interface represents an audio track in the multitrack editor
  * @property id - Unique identifier for the track
  * @property name - Display name of the track
@@ -87,6 +103,14 @@ export default function Uploader() {
     { id: 1, name: 'Song 1', volume: 0.8, startPosition: 0, draggable: true, envelope: [] },
     { id: 2, name: 'Song 2', volume: 0.8, startPosition: 0, draggable: true, envelope: [] },
   ]);
+  
+  /**
+   * Regions state for subtitle/caption markers
+   * Regions are visual markers on the timeline that can represent subtitles or sections
+   */
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [selectedRegion, setSelectedRegion] = useState<string | null>(null);
+  const regionsPluginRef = useRef<any>(null);
 
   // ============================================================================
   // FILE HANDLING
@@ -209,9 +233,14 @@ export default function Uploader() {
       { id: 2, name: 'Song 2', volume: 0.8, startPosition: 0, draggable: true, envelope: [] },
     ]);
     
+    // Reset regions
+    setRegions([]);
+    setSelectedRegion(null);
+    regionsPluginRef.current = null;
+    
     // Small delay before clearing video URL to ensure cleanup completes
     setTimeout(() => {
-      setVideoUrl(null);
+    setVideoUrl(null);
     }, 50);
     
     // Clear file input to allow re-selecting the same file
@@ -265,11 +294,31 @@ export default function Uploader() {
       try {
         // Dynamically import to reduce initial bundle size
         const Multitrack = (await import('wavesurfer-multitrack')).default;
+        const RegionsPlugin = (await import('wavesurfer.js/dist/plugins/regions.js')).default;
 
         // Guard: Check if effect was cancelled during async operation
         if (isCancelled) return;
 
         /**
+         * INITIALIZE REGIONS PLUGIN
+         * Create regions plugin for subtitle markers on the timeline
+         * See: https://wavesurfer.xyz/examples/?regions.js
+         */
+        const regionsPlugin = RegionsPlugin.create();
+        
+        // Click region to edit text
+        regionsPlugin.on('region-clicked', (region: any) => {
+          const newText = prompt('Edit subtitle:', region.content);
+          if (newText !== null) {
+            region.setOptions({ content: newText });
+            setRegions(prev => prev.map(r => 
+              r.id === region.id ? { ...r, content: newText } : r
+            ));
+          }
+        });
+
+        /**
+         * CREATE MULTITRACK INSTANCE
          * Create multitrack instance with three tracks
          * Each track has:
          * - id: Unique identifier
@@ -278,49 +327,53 @@ export default function Uploader() {
          * - startPosition: Initial position in seconds
          * - volume: Initial volume (0.0 to 1.0)
          * - options: Waveform visualization settings (colors, height)
+         * - plugins: Array of wavesurfer plugins (e.g., regions for subtitles)
          */
+        const tracksConfig = [
+          {
+            id: 0,
+            url: videoUrl, // Video's audio track
+            draggable: false,
+            startPosition: 0,
+            volume: tracks[0].volume,
+            envelope: tracks[0].envelope && tracks[0].envelope.length > 0 ? tracks[0].envelope : true,
+            plugins: [regionsPlugin], 
+            options: {
+              waveColor: 'hsl(217, 87%, 49%)',
+              progressColor: 'hsl(217, 87%, 20%)',
+              height: 128,
+            },
+          },
+          {
+            id: 1,
+            url: '/song1.mp3',
+            draggable: true,
+            startPosition: tracks[1].startPosition,
+            volume: tracks[1].volume,
+            envelope: tracks[1].envelope && tracks[1].envelope.length > 0 ? tracks[1].envelope : true,
+            options: {
+              waveColor: 'hsl(161, 87%, 49%)',
+              progressColor: 'hsl(161, 87%, 20%)',
+              height: 128,
+            },
+          },
+          {
+            id: 2,
+            url: '/song2.mp3',
+            draggable: true,
+            startPosition: tracks[2].startPosition,
+            volume: tracks[2].volume,
+            envelope: tracks[2].envelope && tracks[2].envelope.length > 0 ? tracks[2].envelope : true,
+            options: {
+              waveColor: 'hsl(46, 87%, 49%)',
+              progressColor: 'hsl(46, 87%, 20%)',
+              height: 128,
+            },
+          },
+        ] as any; // Type assertion needed because plugins property isn't in official type definitions
+        
         const multitrack = Multitrack.create(
-          [
-            {
-              id: 0,
-              url: videoUrl, // Video's audio track
-              draggable: false,
-              startPosition: 0,
-              volume: tracks[0].volume,
-              envelope: tracks[0].envelope && tracks[0].envelope.length > 0 ? tracks[0].envelope : true,
-              options: {
-                waveColor: 'hsl(217, 87%, 49%)',
-                progressColor: 'hsl(217, 87%, 20%)',
-                height: 90,
-              },
-            },
-            {
-              id: 1,
-              url: '/song1.mp3',
-              draggable: true,
-              startPosition: tracks[1].startPosition,
-              volume: tracks[1].volume,
-              envelope: tracks[1].envelope && tracks[1].envelope.length > 0 ? tracks[1].envelope : true,
-              options: {
-                waveColor: 'hsl(161, 87%, 49%)',
-                progressColor: 'hsl(161, 87%, 20%)',
-                height: 90,
-              },
-            },
-            {
-              id: 2,
-              url: '/song2.mp3',
-              draggable: true,
-              startPosition: tracks[2].startPosition,
-              volume: tracks[2].volume,
-              envelope: tracks[2].envelope && tracks[2].envelope.length > 0 ? tracks[2].envelope : true,
-              options: {
-                waveColor: 'hsl(46, 87%, 49%)',
-                progressColor: 'hsl(46, 87%, 20%)',
-                height: 90,
-              },
-            },
-          ],
+          tracksConfig,
           {
             container: containerRef.current,
             minPxPerSec: zoom,
@@ -461,9 +514,40 @@ export default function Uploader() {
          */
         let tracksLoaded = 0;
         const totalTracks = 3;
+        let regionsPluginReady = false;
         
         const checkAllTracksReady = () => {
           tracksLoaded++;
+          
+          // Set regions plugin ref when first track (video audio) is ready
+          // Get the actual regions plugin from the WaveSurfer instance
+          if (tracksLoaded === 1 && !regionsPluginReady) {
+            regionsPluginReady = true;
+            setTimeout(() => {
+              // Try to get the actual WaveSurfer instance from multitrack
+              const multitrackAny = multitrack as any;
+              
+              // Try multiple possible locations for the track instances
+              const track0 = multitrackAny.wavesurfers?.[0] || 
+                            multitrackAny.channels?.[0] || 
+                            multitrackAny.players?.[0] ||
+                            multitrackAny.ws?.[0] ||
+                            multitrackAny.instances?.[0];
+              
+              if (track0) {
+                console.log('Found track 0 WaveSurfer instance:', track0);
+                // Get the regions plugin from the WaveSurfer instance
+                const actualRegionsPlugin = track0.plugins?.[0] || regionsPlugin;
+                regionsPluginRef.current = actualRegionsPlugin;
+                console.log('Regions plugin is now ready!', actualRegionsPlugin);
+              } else {
+                // Fallback to the original plugin
+                console.warn('Could not find track 0 instance, using original plugin');
+        regionsPluginRef.current = regionsPlugin;
+              }
+            }, 500); // Wait 500ms for WaveSurfer to fully initialize
+          }
+          
           if (tracksLoaded === totalTracks) {
             setTracksReady(true);
           }
@@ -512,6 +596,9 @@ export default function Uploader() {
         }
         multitrackRef.current = null;
       }
+      
+      // Clear regions plugin reference
+      regionsPluginRef.current = null;
     };
   }, [videoUrl, zoom]);
 
@@ -620,6 +707,107 @@ export default function Uploader() {
     if (typeof multitrack.setTrackVolume === 'function') {
       multitrack.setTrackVolume(trackId, volume);
     }
+  };
+
+  // ============================================================================
+  // REGION MANAGEMENT (Subtitle Markers)
+  // ============================================================================
+  
+  /**
+   * Add a new region (subtitle marker) to the timeline
+   * Creates a 2-second region starting at current playback time
+   */
+    /**
+     * Add a new subtitle region at current playback time
+     */
+    const addRegion = () => {
+      if (!regionsPluginRef.current) {
+        alert('Please wait for the video to load completely.');
+        return;
+      }
+      
+      const regionId = `region-${Date.now()}`;
+      const start = currentTime;
+      const end = Math.min(start + 10, duration); // 10-second duration
+      const content = 'New subtitle';
+      
+      // Random color
+      const colors = [
+        'rgba(200, 50, 50, 0.5)',
+        'rgba(50, 200, 50, 0.5)',
+        'rgba(50, 50, 200, 0.5)',
+        'rgba(200, 200, 50, 0.5)',
+        'rgba(200, 50, 200, 0.5)',
+        'rgba(50, 200, 200, 0.5)',
+      ];
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      
+      // Add region (no drag/resize)
+      regionsPluginRef.current.addRegion({
+        id: regionId,
+        start,
+        end,
+        content,
+        color,
+        drag: false,
+        resize: false,
+      });
+      
+      // Add to state
+      setRegions(prev => [...prev, { id: regionId, start, end, content, color }]);
+    };
+  
+  /**
+   * Update a region's time (start and/or end)
+   */
+  const updateRegionTime = (regionId: string, start: number, end: number) => {
+    if (!regionsPluginRef.current) return;
+    
+    const regions = regionsPluginRef.current.getRegions();
+    const region = regions.find((r: any) => r.id === regionId);
+    
+    if (region) {
+      // Validate times
+      const validStart = Math.max(0, Math.min(start, duration));
+      const validEnd = Math.max(validStart, Math.min(end, duration));
+      
+      // Update region in plugin
+      region.setOptions({ start: validStart, end: validEnd });
+      
+      // Update state
+      setRegions(prev => prev.map(r => 
+        r.id === regionId ? { ...r, start: validStart, end: validEnd } : r
+      ));
+    }
+  };
+
+  /**
+   * Delete a region by ID
+   */
+  const deleteRegion = (regionId: string) => {
+    if (!regionsPluginRef.current) return;
+    
+    const regions = regionsPluginRef.current.getRegions();
+    const region = regions.find((r: any) => r.id === regionId);
+    
+    if (region) {
+      region.remove();
+      setRegions(prev => prev.filter(r => r.id !== regionId));
+      if (selectedRegion === regionId) {
+        setSelectedRegion(null);
+      }
+    }
+  };
+
+  /**
+   * Clear all regions from the timeline
+   */
+  const clearAllRegions = () => {
+    if (!regionsPluginRef.current) return;
+    
+    regionsPluginRef.current.clearRegions();
+    setRegions([]);
+    setSelectedRegion(null);
   };
 
   // ============================================================================
@@ -755,9 +943,132 @@ export default function Uploader() {
 
               {/* Waveform Display */}
               <div className="bg-[#2d2d2d] p-4 rounded-lg">
-                <div ref={containerRef} className="w-full min-h-[300px]" style={{ cursor: 'default' }} />
+                <div ref={containerRef} className="w-full min-h-[450px]" style={{ cursor: 'default' }} />
                 <div className="mt-2 text-xs text-gray-400">
-                  💡 Click on any waveform (Video Audio, Song 1, or Song 2) to add volume envelope markers. Drag markers to adjust volume over time.
+                  💡 Click on any waveform to add volume envelope markers for dynamic volume control.
+                </div>
+              </div>
+
+              {/* Region (Subtitle) Controls */}
+              <div className="bg-gray-800 p-4 rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <h4 className="text-sm font-semibold text-white">📝 Subtitle Regions</h4>
+                    {regionsPluginRef.current && (
+                      <span className="text-xs text-green-400">
+                        ✓ Ready
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={addRegion}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded text-sm font-semibold transition-colors"
+                      title="Add a new subtitle region at current time"
+                    >
+                      + Add Region
+                    </button>
+              {regions.length > 0 && (
+                      <button
+                        onClick={clearAllRegions}
+                        className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm font-semibold transition-colors"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+                {regions.length === 0 ? (
+                  <div className="text-center text-gray-400 text-sm py-2">
+                    No regions yet. Click "Add Region" to create a subtitle marker at current time.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                    {regions.map((region) => (
+                      <div
+                        key={region.id}
+                        className={`bg-gray-700 p-3 rounded ${
+                          selectedRegion === region.id ? 'ring-2 ring-indigo-500' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-white text-sm font-medium">{region.content}</div>
+                          <button
+                            onClick={() => deleteRegion(region.id)}
+                            className="bg-red-600 hover:bg-red-700 text-white px-2 py-1 rounded text-xs font-semibold transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        
+                        {/* Time editing controls */}
+                        <div className="flex items-center space-x-2 mb-2">
+                          <div className="flex-1">
+                            <label className="text-xs text-gray-400 mb-1 block">Start (s)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={region.start.toFixed(1)}
+                              onChange={(e) => {
+                                const newStart = parseFloat(e.target.value) || 0;
+                                updateRegionTime(region.id, newStart, region.end);
+                              }}
+                              className="w-full px-2 py-1 bg-gray-800 text-white text-xs rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          
+                          <div className="flex-1">
+                            <label className="text-xs text-gray-400 mb-1 block">End (s)</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={region.end.toFixed(1)}
+                              onChange={(e) => {
+                                const newEnd = parseFloat(e.target.value) || region.start;
+                                updateRegionTime(region.id, region.start, newEnd);
+                              }}
+                              className="w-full px-2 py-1 bg-gray-800 text-white text-xs rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+                            />
+                          </div>
+                          
+                          <div className="text-xs text-gray-400 pt-5">
+                            {(region.end - region.start).toFixed(1)}s
+                          </div>
+                        </div>
+                        
+                        {/* Subtitle text input */}
+                        <div>
+                          <label className="text-xs text-gray-400 mb-1 block">Subtitle Text</label>
+                          <input
+                            type="text"
+                            value={region.content}
+                            onChange={(e) => {
+                              const newContent = e.target.value;
+                              
+                              // Update plugin region
+                              const regions = regionsPluginRef.current?.getRegions();
+                              const pluginRegion = regions?.find((r: any) => r.id === region.id);
+                              if (pluginRegion) {
+                                pluginRegion.setOptions({ content: newContent });
+                              }
+                              
+                              // Update state
+                              setRegions(prev => prev.map(r => 
+                                r.id === region.id ? { ...r, content: newContent } : r
+                              ));
+                            }}
+                            className="w-full px-2 py-1 bg-gray-800 text-white text-sm rounded border border-gray-600 focus:outline-none focus:border-indigo-500"
+                            placeholder="Enter subtitle text..."
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                <div className="text-xs text-gray-400 border-t border-gray-700 pt-2 mt-3">
+                  💡 Edit subtitle text directly in the text input above. Click any colored region in the waveform for quick editing.
                 </div>
               </div>
 
